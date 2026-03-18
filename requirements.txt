@@ -1,0 +1,6 @@
+ccxt==4.3.89
+pandas==2.2.2
+pandas-ta==0.3.14b
+python-dotenv==1.0.1
+flask==3.0.3
+gunicorn==22.0.0

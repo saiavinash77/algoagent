@@ -1,0 +1,126 @@
+# 🤖 Trading Bot — Setup Guide (Windows)
+# Follow every step in order. Don't skip any.
+
+=======================================================
+STEP 1 — INSTALL PYTHON
+=======================================================
+1. Go to: https://www.python.org/downloads/
+2. Download Python 3.11 or newer
+3. During install → CHECK "Add Python to PATH" ✅
+4. Finish install
+5. Open Command Prompt (press Win+R → type cmd → Enter)
+6. Type: python --version
+   You should see: Python 3.11.x
+
+
+=======================================================
+STEP 2 — SET UP PROJECT FOLDER
+=======================================================
+Open Command Prompt and run these one by one:
+
+    cd Desktop
+    mkdir trading_bot
+    cd trading_bot
+
+Now copy ALL the bot files into this folder:
+  - bot.py
+  - risk_manager.py
+  - logger.py
+  - backtest.py
+  - requirements.txt
+  - .env.example
+
+
+=======================================================
+STEP 3 — INSTALL LIBRARIES
+=======================================================
+In Command Prompt (inside trading_bot folder):
+
+    pip install -r requirements.txt
+
+Wait for it to finish (2-3 minutes).
+
+
+=======================================================
+STEP 4 — GET BINANCE TESTNET API KEYS
+=======================================================
+The testnet is a fake exchange — no real money involved.
+
+1. Go to: https://testnet.binance.vision/
+2. Click "Log In with GitHub" (create GitHub account if needed)
+3. After login → click "Generate HMAC_SHA256 Key"
+4. COPY the API Key and Secret Key — save them somewhere safe!
+
+
+=======================================================
+STEP 5 — CONFIGURE YOUR .env FILE
+=======================================================
+1. In your trading_bot folder, rename ".env.example" to ".env"
+2. Open .env with Notepad
+3. Replace the placeholder values:
+
+    BINANCE_API_KEY=paste_your_api_key_here
+    BINANCE_API_SECRET=paste_your_secret_here
+    TESTNET=true
+
+4. Save the file.
+
+
+=======================================================
+STEP 6 — RUN THE BACKTEST FIRST
+=======================================================
+ALWAYS backtest before running live. In Command Prompt:
+
+    python backtest.py
+
+You'll see results like:
+  ✅ Strategy looks PROFITABLE — safe to paper trade!
+
+If you see a warning, tell me and we'll tune the settings.
+
+
+=======================================================
+STEP 7 — RUN THE BOT (TESTNET MODE)
+=======================================================
+    python bot.py
+
+You'll see live output like:
+  [10:32:15] Price: 67450.00 | EMA9: 67380 | EMA21: 67200 | RSI: 52.3 | Signal: HOLD
+  [10:37:15] Price: 67510.00 | EMA9: 67450 | EMA21: 67210 | RSI: 58.1 | Signal: BUY
+  🟢 BUY | Price: 67510.00 | SL: 67200.00 | TP: 68400.00 | Qty: 0.000089
+
+To stop the bot: press Ctrl+C
+
+
+=======================================================
+STEP 8 — CHECK YOUR TRADES
+=======================================================
+All trades are saved to: logs/trades.csv
+Open it in Excel to see your trade history and P&L.
+
+
+=======================================================
+GOING LIVE (Only after 1-2 weeks of profitable testnet)
+=======================================================
+1. Create a REAL Binance account: https://www.binance.com
+2. Complete KYC verification
+3. Get real API keys from: Binance → Profile → API Management
+4. Update .env with real keys and set TESTNET=false
+5. Deposit a small amount ($20-$50) to start
+6. Run: python bot.py
+
+
+=======================================================
+KEEP BOT RUNNING 24/7
+=======================================================
+Option A (Simple) — Keep your PC on and leave the bot running.
+
+Option B (Better) — Use a free VPS:
+  1. Sign up at: https://cloud.google.com (free $300 credits)
+     or https://aws.amazon.com/free
+  2. Create a Linux VM
+  3. Upload your bot files
+  4. Run: nohup python bot.py &
+     (runs even after you close the terminal)
+
+Tell me when you reach any step and I'll help you through it!
