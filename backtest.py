@@ -8,7 +8,7 @@ Usage: python backtest.py
 
 import ccxt
 import pandas as pd
-import pandas_ta as ta
+import pandas_ta_classic as ta
 from datetime import datetime
 
 # ── Config (must match bot.py) ───────────────────────────────────────────────
