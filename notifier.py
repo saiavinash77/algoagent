@@ -11,8 +11,13 @@ def send_email(subject, body):
     receiver_email = os.getenv("EMAIL_RECEIVER")
     password = os.getenv("EMAIL_PASSWORD")
 
-    if not sender_email or not receiver_email or not password:
-        print("⚠️ Email credentials missing in .env")
+    missing = []
+    if not sender_email: missing.append("EMAIL_SENDER")
+    if not receiver_email: missing.append("EMAIL_RECEIVER")
+    if not password: missing.append("EMAIL_PASSWORD")
+
+    if missing:
+        print(f"Skipped email notification. Missing variables: {', '.join(missing)}")
         return
 
     # Create message
