@@ -31,7 +31,11 @@ REQUIRED_VARS = ["BINANCE_API_KEY", "BINANCE_API_SECRET", "EMAIL_SENDER", "EMAIL
 missing = [v for v in REQUIRED_VARS if not os.getenv(v)]
 if missing:
     print(f"CRITICAL ERROR: Missing environment variables: {', '.join(missing)}")
-    print("Please check your Railway/Render dashboard and ensure these keys are added correctly.")
+    print("Environment variables found starting with 'EMAIL_':")
+    for k in os.environ:
+        if k.startswith("EMAIL_"):
+            print(f"  - {k}")
+    print("Please check your Railway dashboard for typos in these names.")
 else:
     print("SUCCESS: All required environment variables found.")
 
