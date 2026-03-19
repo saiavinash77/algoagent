@@ -26,6 +26,15 @@ API_KEY    = os.getenv("BINANCE_API_KEY")
 API_SECRET = os.getenv("BINANCE_API_SECRET")
 TESTNET    = os.getenv("TESTNET", "true").lower() == "true"
 
+# ── Diagnostic Check ────────────────────────────────────────────────────────
+REQUIRED_VARS = ["BINANCE_API_KEY", "BINANCE_API_SECRET", "EMAIL_SENDER", "EMAIL_RECEIVER", "EMAIL_PASSWORD"]
+missing = [v for v in REQUIRED_VARS if not os.getenv(v)]
+if missing:
+    print(f"CRITICAL ERROR: Missing environment variables: {', '.join(missing)}")
+    print("Please check your Railway/Render dashboard and ensure these keys are added correctly.")
+else:
+    print("SUCCESS: All required environment variables found.")
+
 # ── Bot Configuration ────────────────────────────────────────────────────────
 CONFIG = {
     "symbol":        "BTC/USDT",   # Trading pair
