@@ -15,10 +15,10 @@ from datetime import datetime
 from dotenv import load_dotenv
 from risk_manager import RiskManager
 from logger import setup_logger, log_trade
-from notifier import send_email
-import traceback
+from notifier import notify
 import threading
 from flask import Flask
+from waitress import serve
 
 # ── Load API keys from .env ──────────────────────────────────────────────────
 load_dotenv()
@@ -26,16 +26,27 @@ API_KEY    = os.getenv("BINANCE_API_KEY")
 API_SECRET = os.getenv("BINANCE_API_SECRET")
 TESTNET    = os.getenv("TESTNET", "true").lower() == "true"
 
+# Telegram Config (Optional fallback for Railway)
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID")
+
 # ── Diagnostic Check ────────────────────────────────────────────────────────
 REQUIRED_VARS = ["BINANCE_API_KEY", "BINANCE_API_SECRET", "EMAIL_SENDER", "EMAIL_RECEIVER", "EMAIL_PASSWORD"]
 missing = [v for v in REQUIRED_VARS if not os.getenv(v)]
+
 if missing:
     print(f"CRITICAL ERROR: Missing environment variables: {', '.join(missing)}")
-    print("Environment variables found starting with 'EMAIL_':")
+    
+    # Check if Telegram is available as a fallback
+    if os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID"):
+        print("💡 NOTE: Telegram fallback IS configured. You will receive alerts via Telegram.")
+    else:
+        print("💡 TIP: Railway blocks Email (SMTP). Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to get alerts via Telegram instead!")
+    
+    print("Environment variables found starting with 'EMAIL_' or 'TELEGRAM_':")
     for k in os.environ:
-        if k.startswith("EMAIL_"):
+        if k.startswith("EMAIL_") or k.startswith("TELEGRAM_"):
             print(f"  - {k}")
-    print("Please check your Railway dashboard for typos in these names.")
 else:
     print("SUCCESS: All required environment variables found.")
 
@@ -161,8 +172,8 @@ def execute_trade(exchange, signal, candle, risk_mgr, reason="N/A"):
             order = exchange.create_market_buy_order(symbol, qty)
             log_trade("BUY", price, stop_loss, take_profit, qty, order, reason=reason)
             
-            # Send Email Alert
-            send_email(
+            # Send Notification Alert
+            notify(
                 f"🟢 BUY Order ({reason}): {symbol}",
                 f"Price: {price:.2f}\nReason: {reason}\nStop Loss: {stop_loss:.2f}\nTake Profit: {take_profit:.2f}\nQuantity: {qty:.6f}"
             )
@@ -186,8 +197,8 @@ def execute_trade(exchange, signal, candle, risk_mgr, reason="N/A"):
             order = exchange.create_market_sell_order(symbol, base_qty)
             log_trade("SELL", price, 0, 0, base_qty, order, reason=reason)
             
-            # Send Email Alert
-            send_email(
+            # Send Notification Alert
+            notify(
                 f"🔴 SELL Order ({reason}): {symbol}",
                 f"Price: {price:.2f}\nReason: {reason}\nQuantity: {base_qty:.6f}"
             )
@@ -243,7 +254,7 @@ def send_periodic_report(exchange, df):
             f"   EMA9/21: {last_candle['ema_fast']:.2f} / {last_candle['ema_slow']:.2f}\n\n"
             f"Bot is running normally. Next report in 4 hours."
         )
-        send_email(f"📉 Trading Bot Report - {total_usdt:.2f} USDT", report_body)
+        notify(f"📉 Trading Bot Report - {total_usdt:.2f} USDT", report_body)
         logger.info("Periodic report sent via email")
     except Exception as e:
         logger.error(f"Failed to generate report: {e}")
@@ -286,7 +297,7 @@ def send_daily_summary(exchange):
             f"   Total Daily P&L : {total_pnl:+.2f} USDT ({pnl_pct:+.2f}%)\n\n"
             f"Next daily summary in 24 hours."
         )
-        send_email(f"🏆 Daily Bot Summary: {total_pnl:+.2f} USDT", summary_body)
+        notify(f"🏆 Daily Bot Summary: {total_pnl:+.2f} USDT", summary_body)
         logger.info("📩 Daily summary sent via email")
     except Exception as e:
         logger.error(f"Failed to generate daily summary: {e}")
@@ -299,9 +310,10 @@ def health_check():
     return "Bot is alive!", 200
 
 def run_health_check_server():
-    # Render provides PORT environment variable
+    # Render/Railway provide PORT environment variable
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    logger.info(f"Starting production health check server on port {port}...")
+    serve(app, host="0.0.0.0", port=port)
 
 def run_bot():
     """Main 24/7 bot loop"""
@@ -324,7 +336,7 @@ def run_bot():
     last_daily_time  = time.time()
     
     # Send startup notification
-    send_email("Trading Bot Started", f"Bot is now active in {'TESTNET' if TESTNET else 'LIVE'} mode on {CONFIG['symbol']}")
+    notify("Trading Bot Started", f"Bot is now active in {'TESTNET' if TESTNET else 'LIVE'} mode on {CONFIG['symbol']}")
 
     highest_price = 0
     while True:

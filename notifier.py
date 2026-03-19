@@ -1,5 +1,6 @@
 import smtplib
 import os
+import requests
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
@@ -35,6 +36,33 @@ def send_email(subject, body):
         # print(f"✅ Email sent: {subject}")
     except Exception as e:
         print(f"❌ Failed to send email: {e}")
+
+def send_telegram(message):
+    """Send message via Telegram Bot API (Fallback for cloud SMTP blocking)"""
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    
+    if not token or not chat_id:
+        return # Telegram not configured
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {"chat_id": chat_id, "text": message}
+    
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        if not response.ok:
+            print(f"❌ Telegram Error: {response.text}")
+    except Exception as e:
+        print(f"❌ Telegram Connection Error: {e}")
+
+def notify(subject, body):
+    """Notify via both Email and Telegram if configured"""
+    # Try Email
+    send_email(subject, body)
+    
+    # Try Telegram
+    full_message = f"🔔 {subject}\n\n{body}"
+    send_telegram(full_message)
 
 if __name__ == "__main__":
     # Test notification
