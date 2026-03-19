@@ -23,8 +23,10 @@ CONFIG = {
     "atr_period":    14,
     "atr_sl_mult":   1.5,
     "atr_tp_mult":   3.0,
-    "initial_balance":100.0,   # Start with $100 for simulation
+    "initial_balance":100.0,
     "risk_per_trade": 0.02,
+    "min_ema_spread": 0.0001,   # 0.01% min spread
+    "trailing_sl_pct": 0.005,  # 0.5% trailing stop
 }
 
 
@@ -56,17 +58,31 @@ def run_backtest(df):
         row  = df.iloc[i]
         prev = df.iloc[i - 1]
 
-        # ── Check open position stop loss / take profit ──────────────────────
+        # ── Check active position (Stop Loss / Take Profit / Trailing Stop) ──
         if position:
+            # Update Highest Price for Trailing Stop
+            position["highest_price"] = max(position["highest_price"], row["high"])
+            
+            # Calculate Trailing Stop Level
+            trailing_sl = position["highest_price"] * (1 - CONFIG["trailing_sl_pct"])
+            
             if row["low"] <= position["sl"]:
-                # Stop loss hit
+                # Fixed Stop loss hit
                 pnl     = (position["sl"] - position["entry"]) * position["qty"]
                 balance += position["qty"] * position["sl"]
                 trades.append({"type": "SL", "pnl": pnl, "balance": balance})
                 position = None
                 continue
+            
+            elif row["low"] <= trailing_sl:
+                # Trailing Stop hit
+                pnl     = (trailing_sl - position["entry"]) * position["qty"]
+                balance += position["qty"] * trailing_sl
+                trades.append({"type": "TSL", "pnl": pnl, "balance": balance})
+                position = None
+                continue
 
-            if row["high"] >= position["tp"]:
+            elif row["high"] >= position["tp"]:
                 # Take profit hit
                 pnl     = (position["tp"] - position["entry"]) * position["qty"]
                 balance += position["qty"] * position["tp"]
@@ -74,11 +90,34 @@ def run_backtest(df):
                 position = None
                 continue
 
-        # ── Generate signal ──────────────────────────────────────────────────
-        ema_cross_up = prev["ema_fast"] <= prev["ema_slow"] and row["ema_fast"] > row["ema_slow"]
-        rsi_ok       = row["rsi"] < CONFIG["rsi_overbought"]
+        # ── Generate Signals ─────────────────────────────────────────────────
+        ema9, ema21 = row["ema_fast"], row["ema_slow"]
+        prev_ema9, prev_ema21 = prev["ema_fast"], prev["ema_slow"]
+        
+        ema_uptrend = ema9 > ema21
+        ema_cross_up = prev_ema9 <= prev_ema21 and ema9 > ema21
+        
+        # Spread calculation
+        spread = (ema9 - ema21) / ema21
+        prev_spread = (prev_ema9 - prev_ema21) / prev_ema21
+        momentum_ok = spread > prev_spread and spread > CONFIG["min_ema_spread"]
+        
+        rsi_ok = row["rsi"] < CONFIG["rsi_overbought"]
+        
+        # Pullback check (Price low touches or dips below EMA9 while in uptrend)
+        pullback_ok = row["low"] <= ema9 and row["close"] > ema9
+        
+        signal = False
+        if rsi_ok and momentum_ok and not position:
+            if ema_cross_up:
+                signal = "Crossover"
+            elif ema_uptrend and pullback_ok:
+                signal = "Pullback"
+            
+            if signal:
+                print(f"DEBUG: Found {signal} signal at {row['timestamp']} | RSI: {row['rsi']:.1f} | Spread: {spread*100:.3f}%")
 
-        if ema_cross_up and rsi_ok and not position:
+        if signal:
             price = row["close"]
             sl    = price - (row["atr"] * CONFIG["atr_sl_mult"])
             tp    = price + (row["atr"] * CONFIG["atr_tp_mult"])
@@ -87,10 +126,22 @@ def run_backtest(df):
             risk_per_unit = price - sl
             qty = risk_amount / risk_per_unit if risk_per_unit > 0 else 0
 
-            if qty > 0 and balance > price * qty:
+            # Safety cap: Never spend more than 95% of balance
+            max_qty = (balance * 0.95) / price
+            qty = min(qty, max_qty)
+
+            if qty > 0.00001:  # Min trade size check
                 balance  -= price * qty
                 peak_bal  = max(peak_bal, balance)
-                position  = {"entry": price, "qty": qty, "sl": sl, "tp": tp}
+                position  = {
+                    "entry": price, 
+                    "qty": qty, 
+                    "sl": sl, 
+                    "tp": tp, 
+                    "highest_price": price, 
+                    "reason": signal
+                }
+                print(f"✅ EXECUTE {signal} | Price: {price:.2f} | Qty: {qty:.6f}")
 
     # ── Results ──────────────────────────────────────────────────────────────
     final_balance = CONFIG["initial_balance"] if not trades else trades[-1]["balance"]
@@ -124,6 +175,6 @@ def run_backtest(df):
 
 
 if __name__ == "__main__":
-    df = fetch_historical(CONFIG["symbol"], CONFIG["timeframe"], limit=1000)
+    df = fetch_historical(CONFIG["symbol"], CONFIG["timeframe"], limit=2000)
     df = add_indicators(df)
     run_backtest(df)

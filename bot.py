@@ -39,6 +39,8 @@ CONFIG = {
     "atr_sl_mult":   1.5,          # Stop loss = 1.5x ATR
     "atr_tp_mult":   3.0,          # Take profit = 3x ATR (2:1 R:R)
     "risk_per_trade":0.02,         # Risk 2% of balance per trade
+    "min_ema_spread": 0.0001,      # 0.01% min spread factor
+    "trailing_sl_pct": 0.005,      # 0.5% trailing stop
     "loop_sleep":    60,           # Check every 60 seconds
     "report_interval": 4 * 60 * 60, # 4-hour report (seconds)
 }
@@ -84,26 +86,48 @@ def calculate_indicators(df):
 
 def get_signal(df):
     """
-    Generate trading signal based on strategy:
-    BUY  → Fast EMA crosses above Slow EMA AND RSI < 65 (not overbought)
-    SELL → Fast EMA crosses below Slow EMA AND RSI > 35 (not oversold)
+    Generate trading signal based on 'Strategic Hunter' logic:
+    1. EMA9 > EMA21 (Uptrend)
+    2. Momentum: EMA Spread is widening
+    3. Entry: Crossover OR Price Pullback to EMA9
+    4. Safety: RSI < 65
     """
-    last  = df.iloc[-1]   # current candle
-    prev  = df.iloc[-2]   # previous candle
+    if len(df) < 50:
+        return "HOLD", None
 
-    ema_cross_up   = prev["ema_fast"] <= prev["ema_slow"] and last["ema_fast"] > last["ema_slow"]
-    ema_cross_down = prev["ema_fast"] >= prev["ema_slow"] and last["ema_fast"] < last["ema_slow"]
-    rsi_ok_buy     = last["rsi"] < CONFIG["rsi_overbought"]
-    rsi_ok_sell    = last["rsi"] > CONFIG["rsi_oversold"]
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
 
-    if ema_cross_up and rsi_ok_buy:
-        return "BUY", last
-    elif ema_cross_down and rsi_ok_sell:
-        return "SELL", last
-    return "HOLD", last
+    # Indicator values
+    ema9, ema21 = last["ema_fast"], last["ema_slow"]
+    prev_9, prev_21 = prev["ema_fast"], prev["ema_slow"]
+
+    # 1. EMA Trend & Crossover
+    ema_uptrend = ema9 > ema21
+    ema_cross_up = prev_9 <= prev_21 and ema9 > ema21
+    
+    # 2. Spread Dynamics (Momentum)
+    spread = (ema9 - ema21) / ema21
+    prev_spread = (prev_9 - prev_21) / prev_21
+    momentum_ok = spread > prev_spread and spread > CONFIG["min_ema_spread"]
+
+    # 3. RSI Filter
+    rsi_ok = last["rsi"] < CONFIG["rsi_overbought"]
+    
+    # 4. Pullback Logic (Price low touches or dips below EMA9 while in uptrend)
+    pullback_ok = last["low"] <= ema9 and last["close"] > ema9
+
+    # Signal Logic
+    if rsi_ok and momentum_ok:
+        if ema_cross_up:
+            return "BUY", "Crossover"
+        elif ema_uptrend and pullback_ok:
+            return "BUY", "Pullback"
+
+    return "HOLD", None
 
 
-def execute_trade(exchange, signal, candle, risk_mgr):
+def execute_trade(exchange, signal, candle, risk_mgr, reason="N/A"):
     """Execute buy or sell order with proper risk management"""
     symbol  = CONFIG["symbol"]
     price   = candle["close"]
@@ -116,18 +140,23 @@ def execute_trade(exchange, signal, candle, risk_mgr):
 
         if qty <= 0:
             logger.warning("Position size too small, skipping trade")
-            return
+            return None
 
-        logger.info(f"BUY  | Price: {price:.2f} | SL: {stop_loss:.2f} | TP: {take_profit:.2f} | Qty: {qty:.6f}")
+        logger.info(f"🟢 BUY ({reason}) | Price: {price:.2f} | SL: {stop_loss:.2f} | TP: {take_profit:.2f} | Qty: {qty:.6f}")
 
-        order = exchange.create_market_buy_order(symbol, qty)
-        log_trade("BUY", price, stop_loss, take_profit, qty, order)
-        
-        # Send Email Alert
-        send_email(
-            f"🟢 BUY Order Executed: {symbol}",
-            f"Price: {price:.2f}\nStop Loss: {stop_loss:.2f}\nTake Profit: {take_profit:.2f}\nQuantity: {qty:.6f}"
-        )
+        try:
+            order = exchange.create_market_buy_order(symbol, qty)
+            log_trade("BUY", price, stop_loss, take_profit, qty, order, reason=reason)
+            
+            # Send Email Alert
+            send_email(
+                f"🟢 BUY Order ({reason}): {symbol}",
+                f"Price: {price:.2f}\nReason: {reason}\nStop Loss: {stop_loss:.2f}\nTake Profit: {take_profit:.2f}\nQuantity: {qty:.6f}"
+            )
+            return order
+        except Exception as e:
+            logger.error(f"Failed to execute BUY order: {e}")
+            return None
 
     elif signal == "SELL":
         # Check if we have a position to sell
@@ -135,21 +164,24 @@ def execute_trade(exchange, signal, candle, risk_mgr):
         base_qty = balance["BTC"]["free"] if "BTC" in balance else 0
 
         if base_qty < 0.0001:
-            logger.info("SELL signal but no BTC position held, skipping")
-            return
+            logger.info(f"SELL ({reason}) skipped: No BTC position held")
+            return None
 
-        stop_loss   = price + (atr * CONFIG["atr_sl_mult"])
-        take_profit = price - (atr * CONFIG["atr_tp_mult"])
+        logger.info(f"🔴 SELL ({reason}) | Price: {price:.2f} | Qty: {base_qty:.6f}")
 
-        logger.info(f"SELL | Price: {price:.2f} | Qty: {base_qty:.6f}")
-        order = exchange.create_market_sell_order(symbol, base_qty)
-        log_trade("SELL", price, stop_loss, take_profit, base_qty, order)
-        
-        # Send Email Alert
-        send_email(
-            f"🔴 SELL Order Executed: {symbol}",
-            f"Price: {price:.2f}\nQuantity: {base_qty:.6f}"
-        )
+        try:
+            order = exchange.create_market_sell_order(symbol, base_qty)
+            log_trade("SELL", price, 0, 0, base_qty, order, reason=reason)
+            
+            # Send Email Alert
+            send_email(
+                f"🔴 SELL Order ({reason}): {symbol}",
+                f"Price: {price:.2f}\nReason: {reason}\nQuantity: {base_qty:.6f}"
+            )
+            return order
+        except Exception as e:
+            logger.error(f"Failed to execute SELL order: {e}")
+            return None
 
 
 def get_last_entry_price(exchange):
@@ -281,30 +313,54 @@ def run_bot():
     # Send startup notification
     send_email("Trading Bot Started", f"Bot is now active in {'TESTNET' if TESTNET else 'LIVE'} mode on {CONFIG['symbol']}")
 
+    highest_price = 0
     while True:
         try:
+            # 1. Fetch balance and status
+            balance  = exchange.fetch_balance()
+            btc_held = balance["BTC"]["free"] if "BTC" in balance else 0
+            
+            # 2. Fetch data & indicators
+            df = fetch_candles(exchange, CONFIG["symbol"], CONFIG["timeframe"])
+            df = calculate_indicators(df)
+            last_candle = df.iloc[-1]
+            current_price = last_candle["close"]
             now = datetime.now().strftime("%H:%M:%S")
 
-            # 1. Fetch data
-            df = fetch_candles(exchange, CONFIG["symbol"], CONFIG["timeframe"])
+            # 3. Trailing Stop Logic (if holding BTC)
+            if btc_held > 0.0001:
+                # Initialize or update highest price seen during trade
+                if highest_price == 0:
+                    highest_price = current_price
+                
+                highest_price = max(highest_price, current_price)
+                trailing_sl = highest_price * (1 - CONFIG["trailing_sl_pct"])
 
-            # 2. Calculate indicators
-            df = calculate_indicators(df)
+                if current_price <= trailing_sl:
+                    logger.info(f"🚨 Trailing Stop Triggered! Price: {current_price:.2f} | Highest: {highest_price:.2f}")
+                    execute_trade(exchange, "SELL", last_candle, risk_mgr, reason="Trailing Stop")
+                    highest_price = 0
+                    continue # Skip current signal check to avoid double-processing
 
-            # 3. Get signal
-            signal, candle = get_signal(df)
+            # 4. Get Signal for New Trades
+            signal, reason = get_signal(df)
 
-            # 4. Log current state
-            last = df.iloc[-1]
+            # 5. Log current state
             logger.info(
-                f"[{now}] Price: {last['close']:.2f} | "
-                f"EMA9: {last['ema_fast']:.2f} | EMA21: {last['ema_slow']:.2f} | "
-                f"RSI: {last['rsi']:.1f} | Signal: {signal}"
+                f"[{now}] Price: {current_price:.2f} | "
+                f"EMA9: {last_candle['ema_fast']:.2f} | EMA21: {last_candle['ema_slow']:.2f} | "
+                f"RSI: {last_candle['rsi']:.1f} | Signal: {signal if signal == 'HOLD' else signal + ' (' + reason + ')'}"
             )
 
-            # 5. Execute if signal
-            if signal != "HOLD":
-                execute_trade(exchange, signal, candle, risk_mgr)
+            # 6. Execute Signal
+            if signal == "BUY":
+                order = execute_trade(exchange, "BUY", last_candle, risk_mgr, reason=reason)
+                if order:
+                    highest_price = current_price # Initialize trail for new trade
+            
+            elif signal == "SELL":
+                execute_trade(exchange, "SELL", last_candle, risk_mgr, reason=reason)
+                highest_price = 0
 
             # 6. Periodic Reporting (every 4 hours)
             if time.time() - last_report_time >= CONFIG["report_interval"]:

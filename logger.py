@@ -39,7 +39,7 @@ def setup_logger():
     return logger
 
 
-def log_trade(side, price, stop_loss, take_profit, quantity, order):
+def log_trade(side, price, stop_loss, take_profit, quantity, order, reason="N/A"):
     """Log every trade to trades.csv for later analysis"""
     os.makedirs("logs", exist_ok=True)
     filepath = "logs/trades.csv"
@@ -50,7 +50,7 @@ def log_trade(side, price, stop_loss, take_profit, quantity, order):
         if not file_exists:
             writer.writerow([
                 "timestamp", "side", "price", "stop_loss",
-                "take_profit", "quantity", "order_id", "status"
+                "take_profit", "quantity", "order_id", "status", "reason"
             ])
         writer.writerow([
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -61,4 +61,5 @@ def log_trade(side, price, stop_loss, take_profit, quantity, order):
             quantity,
             order.get("id", "N/A"),
             order.get("status", "N/A"),
+            reason
         ])
